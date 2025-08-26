@@ -1,0 +1,162 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Voice Language – WebViewer Chatbot (Prototype)</title>
+  <style>
+    :root{--brand:#4A90E2}
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;background:#fff;color:#111}
+    .app{max-width:720px;margin:0 auto;min-height:100dvh;display:flex;flex-direction:column}
+    header{position:sticky;top:0;background:#fff;border-bottom:1px solid #eee;padding:14px 16px;display:flex;gap:12px;align-items:center;justify-content:space-between}
+    h1{margin:0;font-size:18px;color:var(--brand)}
+    .pill{display:flex;gap:8px;align-items:center}
+    select,button{border:1px solid #ddd;border-radius:10px;padding:10px 12px;background:#fff}
+    button{cursor:pointer}
+    button.brand{background:var(--brand);color:#fff;border-color:var(--brand)}
+    main{flex:1;display:flex;flex-direction:column;gap:10px;padding:12px}
+    .chat{flex:1;border:1px solid #eee;border-radius:14px;padding:12px;overflow:auto}
+    .msg{max-width:80%;padding:10px 12px;border-radius:12px;margin:6px 0;line-height:1.35}
+    .me{background:#eaf2ff;margin-left:auto}
+    .bot{background:#f6f6f6}
+    .footer{display:flex;gap:8px;padding:12px}
+    textarea{flex:1;resize:none;border:1px solid #ddd;border-radius:12px;padding:10px;height:64px}
+    .row{display:flex;gap:8px;align-items:center}
+    .muted{color:#666;font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>AI Voice Language (Prototype)</h1>
+      <div class="pill">
+        <label for="lang">Language:</label>
+        <select id="lang">
+          <option value="en-US">English</option>
+          <option value="hi-IN">Hindi / हिन्दी</option>
+          <option value="es-ES">Spanish / Español</option>
+          <option value="fr-FR">French / Français</option>
+        </select>
+      </div>
+    </header><main>
+  <div id="chat" class="chat" aria-live="polite"></div>
+  <div class="row muted">
+    <span id="status">Tap mic and speak…</span>
+  </div>
+  <div class="footer">
+    <button id="micBtn" title="Speak">🎤</button>
+    <textarea id="input" placeholder="Type your message…"></textarea>
+    <button id="sendBtn" class="brand">Send</button>
+  </div>
+</main>
+
+  </div>  <script>
+    // ====== CONFIG ======
+    const USE_BACKEND = false; // set true when you have your own API endpoint
+    const BACKEND_URL = "https://your-backend.example.com/chat"; // expects { reply: string }
+
+    // Simple demo translations (offline, no API key required)
+    const demoDictionary = {
+      "hello": { hi: "नमस्ते", es: "hola", fr: "bonjour" },
+      "how are you?": { hi: "आप कैसे हैं?", es: "¿cómo estás?", fr: "comment ça va?" },
+      "good morning": { hi: "सुप्रभात", es: "buenos días", fr: "bonjour" }
+    };
+
+    // ====== UI helpers ======
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('sendBtn');
+    const micBtn = document.getElementById('micBtn');
+    const statusEl = document.getElementById('status');
+    const langSel = document.getElementById('lang');
+
+    function addMsg(text, who){
+      const div = document.createElement('div');
+      div.className = `msg ${who}`;
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    // ====== Speech Synthesis (TTS) ======
+    function speak(text){
+      try{
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = langSel.value;
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utter);
+      }catch(e){ /* ignore */ }
+    }
+
+    // ====== Speech Recognition (STT) ======
+    let rec, recognizing = false;
+    function initSTT(){
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if(!SR){ statusEl.textContent = 'Speech recognition not supported on this device.'; return; }
+      rec = new SR();
+      rec.lang = langSel.value;
+      rec.interimResults = false;
+      rec.continuous = false;
+      rec.onstart = ()=>{ recognizing = true; statusEl.textContent = 'Listening…'; };
+      rec.onerror = ()=>{ recognizing = false; statusEl.textContent = 'Mic error. Try again.'; };
+      rec.onend = ()=>{ recognizing = false; statusEl.textContent = 'Tap mic and speak…'; };
+      rec.onresult = (e)=>{
+        const text = e.results[0][0].transcript;
+        input.value = text;
+        send();
+      };
+    }
+    initSTT();
+
+    micBtn.onclick = ()=>{
+      if(!rec){ initSTT(); return; }
+      if(recognizing){ try{ rec.stop(); }catch{} return; }
+      rec.lang = langSel.value; try{ rec.start(); }catch{}
+    };
+
+    // ====== Demo offline reply ======
+    function demoReply(text){
+      const key = text.trim().toLowerCase();
+      const code = langSel.value.split('-')[0];
+      const pack = demoDictionary[key];
+      if(pack && pack[code]) return pack[code];
+      // fallback simple tutor behavior
+      if(code === 'hi') return `आपने कहा: "${text}"`;
+      if(code === 'es') return `Dijiste: "${text}"`;
+      if(code === 'fr') return `Vous avez dit: "${text}"`;
+      return `You said: "${text}"`;
+    }
+
+    async function sendToBackend(text){
+      const payload = { message: text, lang: langSel.value };
+      const r = await fetch(BACKEND_URL, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload)});
+      const data = await r.json();
+      return data.reply || 'No reply';
+    }
+
+    // ====== Send flow ======
+    async function send(){
+      const text = input.value.trim();
+      if(!text) return;
+      input.value = '';
+      addMsg(text, 'me');
+      let reply;
+      try{
+        if(USE_BACKEND){
+          reply = await sendToBackend(text);
+        } else {
+          reply = demoReply(text);
+        }
+      }catch(e){ reply = 'Error contacting server.'; }
+      addMsg(reply, 'bot');
+      speak(reply);
+    }
+
+    sendBtn.onclick = send;
+    input.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }});
+
+    // Welcome
+    addMsg('Select a language, tap mic 🎤 or type a phrase, and I will speak back.', 'bot');
+  </script></body>
+</html>
